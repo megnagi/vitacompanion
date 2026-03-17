@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import ChatMessage from "@/components/ChatMessage";
 
@@ -23,10 +24,12 @@ const PERSONA_LABELS: Record<Persona, string> = {
 
 export default function ChatPage() {
   const { data: session, status: authStatus } = useSession();
+  const router = useRouter();
 
   const [userId, setUserId] = useState<string>(DEV_USER_ID);
   const [userName, setUserName] = useState<string>("Test User");
   const [activePersona, setActivePersona] = useState<Persona>("friend");
+  const [personaLoaded, setPersonaLoaded] = useState(false); // true once DB persona is known
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -38,21 +41,33 @@ export default function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Resolve real user from session; fall through to DEV_USER_ID if unauthenticated
+  // Resolve real user from session; redirect to /onboard if user not found
   useEffect(() => {
-    if (authStatus !== "authenticated") return;
+    if (authStatus === "loading") return;
+
+    if (authStatus === "unauthenticated") {
+      // Dev bypass: use DEV_USER_ID without SSO
+      setPersonaLoaded(true);
+      return;
+    }
 
     fetch("/api/auth/sync", { method: "POST" })
-      .then((r) => r.json())
-      .then((data) => {
+      .then((r) => ({ status: r.status, body: r.json() }))
+      .then(async ({ status, body }) => {
+        const data = await body;
+        if (status === 404) {
+          router.replace("/onboarding");
+          return;
+        }
         if (data.user_id) {
           setUserId(data.user_id);
           setUserName(data.full_name ?? session?.user?.name ?? "");
           setActivePersona((data.persona as Persona) ?? "friend");
         }
+        setPersonaLoaded(true);
       })
-      .catch(() => {});
-  }, [authStatus, session]);
+      .catch(() => setPersonaLoaded(true));
+  }, [authStatus, session, router]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -155,12 +170,6 @@ export default function ChatPage() {
     }
   }
 
-  function newConversation() {
-    setConversationId(null);
-    setMessages([]);
-    setError(null);
-  }
-
   const busy = waiting || streaming;
   const firstName = userName.split(" ")[0];
 
@@ -178,31 +187,25 @@ export default function ChatPage() {
           )}
         </span>
 
-        {/* Persona switcher */}
-        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-          {(Object.keys(PERSONA_LABELS) as Persona[]).map((p) => (
-            <button
-              key={p}
-              onClick={() => handlePersonaSwitch(p)}
-              disabled={switchingPersona}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                activePersona === p
-                  ? "bg-white text-blue-700 shadow-sm"
-                  : "text-gray-500 hover:text-gray-800"
-              }`}
-            >
-              {PERSONA_LABELS[p]}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={newConversation}
-          disabled={busy}
-          className="text-xs text-gray-500 hover:text-gray-800 border border-gray-300 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
-        >
-          New chat
-        </button>
+        {/* Persona switcher — hidden until DB persona is loaded to avoid flicker */}
+        {personaLoaded && (
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+            {(Object.keys(PERSONA_LABELS) as Persona[]).map((p) => (
+              <button
+                key={p}
+                onClick={() => handlePersonaSwitch(p)}
+                disabled={switchingPersona}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  activePersona === p
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                {PERSONA_LABELS[p]}
+              </button>
+            ))}
+          </div>
+        )}
       </nav>
 
       {/* Message list */}

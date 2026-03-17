@@ -1,8 +1,40 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useSession, signOut } from "next-auth/react";
 
 export default function DashboardPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [firstName, setFirstName] = useState("");
+
+  useEffect(() => {
+    if (status === "loading") return;
+
+    if (status === "authenticated") {
+      fetch("/api/auth/sync", { method: "POST" })
+        .then(async (r) => {
+          if (r.status === 404) {
+            router.replace("/onboarding");
+            return null;
+          }
+          return r.ok ? r.json() : null;
+        })
+        .then((d) => {
+          if (!d) return;
+          const name = d.full_name ?? session?.user?.name ?? "";
+          setFirstName(name.split(" ")[0]);
+        })
+        .catch(() => {
+          setFirstName(session?.user?.name?.split(" ")[0] ?? "");
+        });
+    } else {
+      setFirstName("Test");
+    }
+  }, [status, session, router]);
+
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -10,22 +42,23 @@ export default function DashboardPage() {
     day: "numeric",
   });
 
-  const firstName = "Test";
-
   return (
     <main className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <span className="text-xl font-bold text-gray-900">VitaCompanion</span>
-        <Link href="/" className="text-sm text-gray-500 hover:text-gray-800">
+        <button
+          onClick={() => signOut({ callbackUrl: "/" })}
+          className="text-sm text-gray-500 hover:text-gray-800"
+        >
           Sign out
-        </Link>
+        </button>
       </nav>
 
       <div className="max-w-2xl mx-auto px-6 py-12 flex flex-col gap-6">
         <div>
           <p className="text-sm text-gray-500">{today}</p>
           <h1 className="text-3xl font-bold text-gray-900 mt-1">
-            Welcome back, {firstName}!
+            {firstName ? `Welcome back, ${firstName}!` : "Welcome back!"}
           </h1>
         </div>
 
@@ -38,10 +71,13 @@ export default function DashboardPage() {
             <p className="text-sm text-gray-500">Ask about nutrition, workouts, or how your day is going.</p>
           </Link>
 
-          <div className="bg-white rounded-xl border border-gray-200 p-6 opacity-60 cursor-not-allowed">
+          <Link
+            href="/log"
+            className="block bg-white rounded-xl border border-gray-200 p-6 hover:shadow-md transition-shadow"
+          >
             <h2 className="text-lg font-semibold text-gray-800 mb-1">Today&apos;s Log</h2>
             <p className="text-sm text-gray-500">Log meals, workouts, and how you feel.</p>
-          </div>
+          </Link>
         </div>
       </div>
     </main>

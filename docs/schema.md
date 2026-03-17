@@ -34,3 +34,30 @@ Same for jsonb: `CAST(:param AS jsonb)`.
 
 ## Source of truth
 `schema.sql` in project root. Run `psql vitacompanion < schema.sql` to recreate.
+
+## pg_cron Setup
+
+See `pg_cron_setup.sql` for the full runnable script. Summary:
+
+```sql
+-- Run as superuser in the vitacompanion database
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;    -- for HTTP calls; optional
+GRANT USAGE ON SCHEMA cron TO vitauser;  -- replace vitauser with your DB user
+```
+
+**Option A — Direct HTTP via pg_net** (schedule calls `POST /scheduler/checkin|nudge/{user_id}` for every active user):
+```sql
+SELECT cron.schedule('vita-daily-checkin', '0 8 * * *',  $$ ... $$);
+SELECT cron.schedule('vita-daily-nudge',   '0 18 * * *', $$ ... $$);
+```
+
+**Option B — Queue-based** (pg_cron inserts into `nudge_queue`; `scheduler_worker.py` polls and fires):
+```bash
+# Run every minute via hosting platform cron:
+python scheduler_worker.py
+```
+
+The `nudge_queue` table (`id`, `user_id`, `nudge_type`, `queued_at`, `processed_at`) is created by `pg_cron_setup.sql`.
+
+**Times are UTC.** All users are triggered at the same UTC time. Per-timezone scheduling can be added later by filtering on `users.timezone` inside the cron SQL.

@@ -32,8 +32,9 @@ email: test2@test.com  lang: en
 - [x] Day 9: Google SSO wired to real users, POST /persona/switch
 - [x] Day 10: Fix markdown rendering in chat (react-markdown)
 - [x] Day 10: Hosting prep (Procfile, .env.example, README.md, requirements.txt)
-- [ ] Day 11: pg_cron activation (uncomment cron stubs in schema.sql, wire to scheduler endpoints)
-- [ ] Day 11: End-to-end polish (onboarding flow, error pages, loading states)
+- [x] Day 11: pg_cron activation (pg_cron_setup.sql + scheduler_worker.py + docs)
+- [x] Day 11: Polish — Today's Log page (/log), onboarding page (/onboard), real name on dashboard, persona flicker fix, onboard redirect for new SSO users
+- [x] Day 11: Multi-step onboarding flow at /onboarding (goal → vitals → medical → dietary → persona)
 
 ## Docs
 - `docs/schema.md` — column names, ENUMs, cast syntax, validation rules
