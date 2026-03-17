@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python seed_rag.py)",
+      "Bash(python3 -c \":*)",
+      "Bash(./test.sh)",
+      "Bash(npx create-next-app@latest frontend --typescript --tailwind --app --no-git --yes)",
+      "Bash(npm install next-auth axios)",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/next/package.json''\\).version\\)\")",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/next-auth/package.json''\\).version\\)\")",
+      "Bash(npx tsc --noEmit)"
+    ]
+  }
+}

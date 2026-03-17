@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import ChatMessage from "@/components/ChatMessage";
 
@@ -9,26 +10,55 @@ interface Message {
   content: string;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+type Persona = "friend" | "coach" | "commander";
 
-// Hardcoded for dev — replace with real user_id from your auth/user lookup
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const DEV_USER_ID = "9f6e1f8c-bf14-4e26-9497-836704795ab2";
 
+const PERSONA_LABELS: Record<Persona, string> = {
+  friend: "Friend",
+  coach: "Coach",
+  commander: "Commander",
+};
+
 export default function ChatPage() {
+  const { data: session, status: authStatus } = useSession();
+
+  const [userId, setUserId] = useState<string>(DEV_USER_ID);
+  const [userName, setUserName] = useState<string>("Test User");
+  const [activePersona, setActivePersona] = useState<Persona>("friend");
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [waiting, setWaiting] = useState(false);   // true = waiting for first chunk
-  const [streaming, setStreaming] = useState(false); // true = chunks arriving
+  const [waiting, setWaiting] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [switchingPersona, setSwitchingPersona] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Resolve real user from session; fall through to DEV_USER_ID if unauthenticated
+  useEffect(() => {
+    if (authStatus !== "authenticated") return;
+
+    fetch("/api/auth/sync", { method: "POST" })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.user_id) {
+          setUserId(data.user_id);
+          setUserName(data.full_name ?? session?.user?.name ?? "");
+          setActivePersona((data.persona as Persona) ?? "friend");
+        }
+      })
+      .catch(() => {});
+  }, [authStatus, session]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, waiting, streaming]);
 
-  async function sendMessage() {
+  const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || waiting || streaming) return;
 
@@ -42,7 +72,7 @@ export default function ChatPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: DEV_USER_ID,
+          user_id: userId,
           message: text,
           conversation_id: conversationId,
         }),
@@ -66,7 +96,6 @@ export default function ChatPage() {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
-        // Keep the last (possibly incomplete) line in the buffer
         buffer = lines.pop() ?? "";
 
         for (const line of lines) {
@@ -78,10 +107,8 @@ export default function ChatPage() {
               firstChunk = false;
               setWaiting(false);
               setStreaming(true);
-              // Add the assistant bubble with the first chunk
               setMessages((prev) => [...prev, { role: "assistant", content: payload.chunk }]);
             } else {
-              // Append to the last message
               setMessages((prev) => {
                 const next = [...prev];
                 next[next.length - 1] = {
@@ -102,7 +129,7 @@ export default function ChatPage() {
       setWaiting(false);
       setStreaming(false);
     }
-  }
+  }, [input, waiting, streaming, userId, conversationId]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -111,16 +138,71 @@ export default function ChatPage() {
     }
   }
 
+  async function handlePersonaSwitch(persona: Persona) {
+    if (persona === activePersona || switchingPersona) return;
+    setSwitchingPersona(true);
+    try {
+      const res = await fetch(`${API_URL}/users/${userId}/persona/switch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona }),
+      });
+      if (res.ok) setActivePersona(persona);
+    } catch {
+      // silently ignore — UI stays on current persona
+    } finally {
+      setSwitchingPersona(false);
+    }
+  }
+
+  function newConversation() {
+    setConversationId(null);
+    setMessages([]);
+    setError(null);
+  }
+
   const busy = waiting || streaming;
+  const firstName = userName.split(" ")[0];
 
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col">
       {/* Nav */}
-      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4 shrink-0">
+      <nav className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 shrink-0">
         <Link href="/dashboard" className="text-gray-400 hover:text-gray-700 text-sm">
           ← Dashboard
         </Link>
-        <span className="text-lg font-semibold text-gray-900">VitaCompanion Chat</span>
+        <span className="text-lg font-semibold text-gray-900 flex-1">
+          VitaCompanion
+          {firstName && (
+            <span className="text-base font-normal text-gray-500 ml-2">· {firstName}</span>
+          )}
+        </span>
+
+        {/* Persona switcher */}
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          {(Object.keys(PERSONA_LABELS) as Persona[]).map((p) => (
+            <button
+              key={p}
+              onClick={() => handlePersonaSwitch(p)}
+              disabled={switchingPersona}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                activePersona === p
+                  ? "bg-white text-blue-700 shadow-sm"
+                  : "text-gray-500 hover:text-gray-800"
+              }`}
+            >
+              {PERSONA_LABELS[p]}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={newConversation}
+          disabled={busy}
+          className="text-xs text-gray-500 hover:text-gray-800 border border-gray-300 rounded-md px-3 py-1 transition-colors disabled:opacity-40"
+        >
+          New chat
+        </button>
       </nav>
 
       {/* Message list */}
@@ -135,7 +217,6 @@ export default function ChatPage() {
           <ChatMessage key={i} role={msg.role} content={msg.content} />
         ))}
 
-        {/* Typing indicator — only while waiting for first chunk */}
         {waiting && (
           <div className="flex justify-start">
             <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 flex gap-1 items-center">
@@ -146,9 +227,7 @@ export default function ChatPage() {
           </div>
         )}
 
-        {error && (
-          <p className="text-center text-red-500 text-sm">{error}</p>
-        )}
+        {error && <p className="text-center text-red-500 text-sm">{error}</p>}
         <div ref={bottomRef} />
       </div>
 

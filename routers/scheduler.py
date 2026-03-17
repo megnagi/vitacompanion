@@ -1,8 +1,10 @@
+import asyncio
 import os
 import uuid
 import json
 from datetime import datetime, timezone, date, timedelta
 
+import anthropic
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -43,13 +45,21 @@ async def _load_user_context(user_id: uuid.UUID, db: AsyncSession):
 
 async def _generate_nudge(system: str, user_prompt: str) -> str:
     client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    response = await client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=100,
-        system=system,
-        messages=[{"role": "user", "content": user_prompt}],
-    )
-    return response.content[0].text.strip()
+    delays = [1, 2, 4]
+    for attempt, delay in enumerate(delays, start=1):
+        try:
+            response = await client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=100,
+                system=system,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+            return response.content[0].text.strip()
+        except anthropic.InternalServerError as exc:
+            if attempt == len(delays):
+                raise
+            print(f"[scheduler] Claude overloaded (attempt {attempt}), retrying in {delay}s: {exc}")
+            await asyncio.sleep(delay)
 
 
 def _build_log_summary(daily_log) -> str:

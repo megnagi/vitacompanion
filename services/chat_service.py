@@ -193,19 +193,24 @@ async def stream_chat(
     input_tokens = 0
     output_tokens = 0
 
-    async with client.messages.stream(
-        model="claude-sonnet-4-5",
-        max_tokens=200,
-        system=system_prompt,
-        messages=claude_messages,
-    ) as stream:
-        async for text in stream.text_stream:
-            full_text += text
-            yield f"data: {json.dumps({'chunk': text})}\n\n"
+    try:
+        async with client.messages.stream(
+            model="claude-sonnet-4-5",
+            max_tokens=200,
+            system=system_prompt,
+            messages=claude_messages,
+        ) as stream:
+            async for text in stream.text_stream:
+                full_text += text
+                yield f"data: {json.dumps({'chunk': text})}\n\n"
 
-        final = await stream.get_final_message()
-        input_tokens = final.usage.input_tokens
-        output_tokens = final.usage.output_tokens
+            final = await stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except Exception:
+        fallback = "I'm having trouble connecting right now. Please try again in a moment."
+        full_text = fallback
+        yield f"data: {json.dumps({'chunk': fallback})}\n\n"
 
     # Save to DB after stream completes
     user_msg = Message(

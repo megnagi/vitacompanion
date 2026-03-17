@@ -135,3 +135,14 @@ class DailyLog(Base):
     user = relationship("User", back_populates="daily_logs")
     meal_logs = relationship("MealLog", back_populates="daily_log")
     workout_logs = relationship("WorkoutLog", back_populates="daily_log")
+
+
+class PersonaSwitchLog(Base):
+    __tablename__ = "persona_switch_log"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    from_persona = Column(ENUM('friend', 'coach', 'commander', name='persona_style', create_type=False), nullable=True)
+    to_persona = Column(ENUM('friend', 'coach', 'commander', name='persona_style', create_type=False), nullable=False)
+    reason = Column(Text, nullable=True)
+    switched_at = Column(DateTime(timezone=True), nullable=False)
