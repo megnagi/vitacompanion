@@ -118,11 +118,17 @@ export default function OnboardingPage() {
     setSubmitting(true);
     setError(null);
     try {
+      // Use the stable Google sub as sso_id; fall back to email only if sub is absent
+      // (e.g. dev bypass without a real Google session)
+      const ssoId = (session as { googleSub?: string } & typeof session)?.googleSub
+        ?? session?.user?.email
+        ?? `anon-${Date.now()}`;
+
       const payload = {
         email: session?.user?.email ?? "unknown@example.com",
         full_name: session?.user?.name ?? "New User",
         sso_provider: "google",
-        sso_id: session?.user?.email ?? `anon-${Date.now()}`,
+        sso_id: ssoId,
         avatar_url: session?.user?.image ?? null,
         date_of_birth: form.date_of_birth,
         sex: form.sex,
@@ -138,15 +144,19 @@ export default function OnboardingPage() {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       };
 
+      console.log("[onboarding] POST /users/onboard payload:", payload);
+
       const res = await fetch(`${API_URL}/users/onboard`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
+      const responseBody = await res.json().catch(() => null);
+      console.log("[onboarding] response status:", res.status, "body:", responseBody);
+
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
-        throw new Error(err.detail ?? `HTTP ${res.status}`);
+        throw new Error(responseBody?.detail ?? `HTTP ${res.status}`);
       }
 
       router.push("/dashboard");
@@ -167,10 +177,12 @@ export default function OnboardingPage() {
   const subheading = [
     "We'll tailor your coaching to what matters most to you.",
     "Used to personalise your nutrition and training targets.",
-    "Optional — helps your coach give safer, smarter advice.",
-    "Optional — we'll factor these into meal and snack suggestions.",
+    "Helps your coach give safer, smarter advice.",
+    "We'll factor these into meal and snack suggestions.",
     "You can change this anytime from the chat page.",
   ][step];
+
+  const isOptionalStep = step === 2 || step === 3;
 
   return (
     <main className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4 py-12">
@@ -179,6 +191,9 @@ export default function OnboardingPage() {
         <StepIndicator current={step} />
 
         <h1 className="text-2xl font-bold text-gray-900 mb-1">{heading}</h1>
+        {isOptionalStep && (
+          <p className="text-xs text-gray-400 mb-1">(Optional)</p>
+        )}
         <p className="text-sm text-gray-500 mb-6">{subheading}</p>
 
         {/* ── Step 0: Goal ── */}
@@ -356,7 +371,7 @@ export default function OnboardingPage() {
               onClick={() => setStep((s) => s + 1)}
               className="flex-1 bg-blue-600 text-white font-medium py-3 rounded-xl hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              {step === 2 || step === 3 ? "Skip" : "Continue"}
+              Next
             </button>
           ) : (
             <button

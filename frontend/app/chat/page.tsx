@@ -55,7 +55,7 @@ export default function ChatPage() {
       .then((r) => ({ status: r.status, body: r.json() }))
       .then(async ({ status, body }) => {
         const data = await body;
-        if (status === 404) {
+        if (status === 404 || data.has_profile === false) {
           router.replace("/onboarding");
           return;
         }

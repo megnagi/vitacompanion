@@ -61,100 +61,120 @@ async def create_user_onboarding(
     db: AsyncSession
 ) -> OnboardingResponse:
 
-    # Check if user already exists (SSO re-login)
-    existing = await db.execute(
-        select(User).where(User.sso_id == data.sso_id)
-    )
-    existing_user = existing.scalar_one_or_none()
-
-    if existing_user:
-        return OnboardingResponse(
-            user_id=str(existing_user.id),
-            full_name=existing_user.full_name,
-            email=existing_user.email,
-            persona="friend",
-            message="Welcome back!"
-        )
-
     now = datetime.now(timezone.utc)
 
-    # Parse preferred check-in time
-    checkin_hour, checkin_minute = map(int, data.preferred_checkin_time.split(":"))
-    checkin_time = time(checkin_hour, checkin_minute)
+    # ── 1. Find existing user by sso_id OR email ──────────────────
+    # Check sso_id first; fall back to email so we never create a
+    # duplicate row when the same user hits onboarding twice.
+    existing_user = None
 
-    # 1. Create user
-    user = User(
-        id=uuid.uuid4(),
-        email=data.email,
-        full_name=data.full_name,
-        sso_provider=data.sso_provider,
-        sso_id=data.sso_id,
-        avatar_url=data.avatar_url,
-        date_of_birth=data.date_of_birth,
-        sex=data.sex,
-        height_cm=data.height_cm,
-        timezone=data.timezone,
-        language=data.language,
-        onboarded_at=now,
-        created_at=now,
-        updated_at=now,
-        is_active=True,
+    if data.sso_id:
+        result = await db.execute(select(User).where(User.sso_id == data.sso_id))
+        existing_user = result.scalar_one_or_none()
+
+    if not existing_user:
+        result = await db.execute(select(User).where(User.email == data.email))
+        existing_user = result.scalar_one_or_none()
+
+    # ── 2. Create user row if not found ──────────────────────────
+    if not existing_user:
+        checkin_hour, checkin_minute = map(int, data.preferred_checkin_time.split(":"))
+        checkin_time = time(checkin_hour, checkin_minute)
+
+        existing_user = User(
+            id=uuid.uuid4(),
+            email=data.email,
+            full_name=data.full_name,
+            sso_provider=data.sso_provider,
+            sso_id=data.sso_id,
+            avatar_url=data.avatar_url,
+            date_of_birth=data.date_of_birth,
+            sex=data.sex,
+            height_cm=data.height_cm,
+            timezone=data.timezone,
+            language=data.language,
+            onboarded_at=now,
+            created_at=now,
+            updated_at=now,
+            is_active=True,
+        )
+        db.add(existing_user)
+        await db.flush()
+
+        # Scheduler state only created alongside a brand-new user row
+        scheduler_state = UserSchedulerState(
+            id=uuid.uuid4(),
+            user_id=existing_user.id,
+            preferred_checkin_time=checkin_time,
+            next_checkin_at=now + timedelta(days=1),
+            days_since_last_weigh_in=0,
+            quiet_hours_start=time(22, 0),
+            quiet_hours_end=time(7, 0),
+            max_nudges_per_day=3,
+            updated_at=now,
+        )
+        db.add(scheduler_state)
+    else:
+        # Patch SSO fields if the row predates SSO wiring
+        if not existing_user.sso_id and data.sso_id:
+            existing_user.sso_id = data.sso_id
+        if not existing_user.sso_provider and data.sso_provider:
+            existing_user.sso_provider = data.sso_provider
+        # Always write vitals from the onboarding form — the form is authoritative
+        existing_user.date_of_birth = data.date_of_birth
+        existing_user.sex = data.sex
+        existing_user.height_cm = data.height_cm
+        existing_user.onboarded_at = now
+        existing_user.updated_at = now
+
+    # ── 3. Create health profile if missing ─────────────────────
+    result = await db.execute(
+        select(UserHealthProfile).where(UserHealthProfile.user_id == existing_user.id)
     )
-    db.add(user)
-    await db.flush()  # get user.id without committing
+    if result.scalar_one_or_none() is None:
+        health_profile = UserHealthProfile(
+            id=uuid.uuid4(),
+            user_id=existing_user.id,
+            primary_goal=data.primary_goal,
+            target_weight_kg=data.target_weight_kg,
+            activity_level=data.activity_level,
+            starting_weight_kg=data.starting_weight_kg,
+            medical_conditions=data.medical_conditions,
+            medications=data.medications,
+            injuries=data.injuries,
+            dietary_restrictions=data.dietary_restrictions,
+            allergies=data.allergies,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(health_profile)
 
-    # 2. Create health profile
-    health_profile = UserHealthProfile(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        primary_goal=data.primary_goal,
-        target_weight_kg=data.target_weight_kg,
-        activity_level=data.activity_level,
-        starting_weight_kg=data.starting_weight_kg,
-        medical_conditions=data.medical_conditions,
-        medications=data.medications,
-        injuries=data.injuries,
-        dietary_restrictions=data.dietary_restrictions,
-        allergies=data.allergies,
-        created_at=now,
-        updated_at=now,
+    # ── 4. Create persona config if missing ─────────────────────
+    result = await db.execute(
+        select(UserPersonaConfig).where(UserPersonaConfig.user_id == existing_user.id)
     )
-    db.add(health_profile)
+    persona_config = result.scalar_one_or_none()
+    if persona_config is None:
+        persona_config = UserPersonaConfig(
+            id=uuid.uuid4(),
+            user_id=existing_user.id,
+            active_persona=data.persona,
+            humor_tolerance=5,
+            praise_frequency=5,
+            safety_override_active=True,
+            switched_at=now,
+            created_at=now,
+        )
+        db.add(persona_config)
 
-    # 3. Create persona config
-    persona_config = UserPersonaConfig(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        active_persona=data.persona,
-        humor_tolerance=5,
-        praise_frequency=5,
-        safety_override_active=True,
-        switched_at=now,
-        created_at=now,
-    )
-    db.add(persona_config)
-
-    # 4. Create scheduler state
-    scheduler_state = UserSchedulerState(
-        id=uuid.uuid4(),
-        user_id=user.id,
-        preferred_checkin_time=checkin_time,
-        next_checkin_at=now + timedelta(days=1),
-        days_since_last_weigh_in=0,
-        quiet_hours_start=time(22, 0),
-        quiet_hours_end=time(7, 0),
-        max_nudges_per_day=3,
-        updated_at=now,
-    )
-    db.add(scheduler_state)
-
-    # All four rows committed together as one transaction
     await db.commit()
 
+    active_persona = persona_config.active_persona if persona_config else data.persona
+    first_name = existing_user.full_name.split()[0]
     return OnboardingResponse(
-        user_id=str(user.id),
-        full_name=user.full_name,
-        email=user.email,
-        persona=data.persona,
-        message=f"Welcome to VitaCompanion, {user.full_name.split()[0]}! Your journey starts now."
+        user_id=str(existing_user.id),
+        full_name=existing_user.full_name,
+        email=existing_user.email,
+        persona=active_persona,
+        message=f"Welcome to VitaCompanion, {first_name}! Your journey starts now.",
     )

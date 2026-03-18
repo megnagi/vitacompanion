@@ -21,8 +21,10 @@ async def onboard_user(
     db: AsyncSession = Depends(get_db),
 ):
     import traceback
+    print(f"[onboard] request: email={data.email} sso_id={data.sso_id} goal={data.primary_goal}")
     try:
         result = await create_user_onboarding(data, db)
+        print(f"[onboard] success: user_id={result.user_id} message={result.message!r}")
         return result
     except Exception as e:
         traceback.print_exc()
@@ -41,18 +43,29 @@ async def get_user_by_email(
     db: AsyncSession = Depends(get_db),
 ):
     from sqlalchemy import select
-    from models.user import User
+    from models.user import User, UserHealthProfile, UserPersonaConfig
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    result = await db.execute(
+        select(UserHealthProfile).where(UserHealthProfile.user_id == user.id)
+    )
+    health_profile = result.scalar_one_or_none()
+
+    result = await db.execute(
+        select(UserPersonaConfig).where(UserPersonaConfig.user_id == user.id)
+    )
+    persona_config = result.scalar_one_or_none()
+
     return {
         "user_id": str(user.id),
         "full_name": user.full_name,
         "email": user.email,
-        "persona": user.persona_config.active_persona if user.persona_config else "friend",
+        "persona": persona_config.active_persona if persona_config else "friend",
+        "has_profile": health_profile is not None,
     }
 
 
@@ -65,24 +78,33 @@ async def get_user(
     db: AsyncSession = Depends(get_db),
 ):
     from sqlalchemy import select
-    from models.user import User
+    from models.user import User, UserPersonaConfig
     import uuid
 
     try:
-        result = await db.execute(
-            select(User).where(User.id == uuid.UUID(user_id))
-        )
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid user_id")
+
+    try:
+        result = await db.execute(select(User).where(User.id == uid))
         user = result.scalar_one_or_none()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
+
+        result = await db.execute(
+            select(UserPersonaConfig).where(UserPersonaConfig.user_id == uid)
+        )
+        persona_config = result.scalar_one_or_none()
+
         return {
             "user_id": str(user.id),
             "full_name": user.full_name,
             "email": user.email,
-            "persona": user.persona_config.active_persona if user.persona_config else "friend",
+            "persona": persona_config.active_persona if persona_config else "friend",
             "onboarded_at": user.onboarded_at,
         }
     except HTTPException:

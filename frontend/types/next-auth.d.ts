@@ -5,5 +5,6 @@ declare module "next-auth" {
     vitaUserId?: string;
     vitaUserName?: string;
     vitaPersona?: string;
+    googleSub?: string;
   }
 }

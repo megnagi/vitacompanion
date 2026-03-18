@@ -24,6 +24,11 @@ export default function DashboardPage() {
         })
         .then((d) => {
           if (!d) return;
+          // User row exists but health profile was never created — needs onboarding
+          if (d.has_profile === false) {
+            router.replace("/onboarding");
+            return;
+          }
           const name = d.full_name ?? session?.user?.name ?? "";
           setFirstName(name.split(" ")[0]);
         })

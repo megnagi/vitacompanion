@@ -54,7 +54,7 @@ def build_system_prompt(
         rag_docs: list[dict],
 ) -> str:
     today_str = date.today().strftime("%A, %B %d, %Y")
-    age = (date.today() - user.date_of_birth).days // 365
+    age = (date.today() - user.date_of_birth).days // 365 if user.date_of_birth else None
     persona = persona_config.active_persona if persona_config else "friend"
 
     log_parts = []
@@ -91,7 +91,7 @@ def build_system_prompt(
         f"IMPORTANT: Reply in 2-3 sentences maximum. Be direct. No lists unless explicitly asked.\n"
         f"You are VitaCompanion, an AI wellness coach for adults 50+. "
         f"Today: {today_str}.\n"
-        f"User: {user.full_name.split()[0]}, {age}yo {user.sex}, goal: {health_profile.primary_goal.replace('_', ' ')}, lang: {user.language}.\n"
+        f"User: {user.full_name.split()[0]}, {f'{age}yo ' if age else ''}{user.sex or 'unknown sex'}, DOB: {user.date_of_birth or 'unknown'}, goal: {health_profile.primary_goal.replace('_', ' ')}, lang: {user.language}.\n"
         f"Today's log: {log_summary}.\n"
         f"Persona: {PERSONA_PROMPTS[persona]}\n"
         f"Safety: {SAFETY_OVERRIDE}\n"
