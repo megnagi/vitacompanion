@@ -188,7 +188,7 @@ async def stream_chat(
     user_id, conversation, system_prompt, claude_messages, persona, now = \
         await _load_context(data, db)
 
-    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = AsyncAnthropic(api_key=(os.getenv("ANTHROPIC_API_KEY") or "").strip())
     full_text = ""
     input_tokens = 0
     output_tokens = 0

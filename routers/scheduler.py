@@ -44,7 +44,7 @@ async def _load_user_context(user_id: uuid.UUID, db: AsyncSession):
 
 
 async def _generate_nudge(system: str, user_prompt: str) -> str:
-    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = AsyncAnthropic(api_key=(os.getenv("ANTHROPIC_API_KEY") or "").strip())
     delays = [1, 2, 4]
     for attempt, delay in enumerate(delays, start=1):
         try:

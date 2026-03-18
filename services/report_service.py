@@ -123,7 +123,7 @@ async def _write_narrative(
         f"Reference specific numbers. Highlight one win and one area to improve.\n{context}"
     )
 
-    client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    client = AsyncAnthropic(api_key=(os.getenv("ANTHROPIC_API_KEY") or "").strip())
     response = await client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=150,

@@ -132,9 +132,14 @@ check_field "persona = coach"     ".persona"      "coach"       "$BY_EMAIL_BODY"
 NOTFOUND_RESP=$(vcurl "$BASE/users/by-email/nobody%40nowhere.com")
 check_status "by-email unknown → 404" "404" "$NOTFOUND_RESP"
 
-# User with no health profile → has_profile = false
+# User with no health profile → has_profile = false (local test data only)
 NO_PROF_BY_EMAIL_RESP=$(vcurl "$BASE/users/by-email/test2%40test.com")
-check_field "test2@test.com has_profile = false" ".has_profile" "false" "$(body_of "$NO_PROF_BY_EMAIL_RESP")"
+NO_PROF_BY_EMAIL_STATUS=$(status_of "$NO_PROF_BY_EMAIL_RESP")
+if [ "$NO_PROF_BY_EMAIL_STATUS" = "200" ]; then
+    check_field "test2@test.com has_profile = false" ".has_profile" "false" "$(body_of "$NO_PROF_BY_EMAIL_RESP")"
+else
+    printf "  ⚠ SKIP test2@test.com has_profile check — user not seeded in this environment (HTTP $NO_PROF_BY_EMAIL_STATUS)\n"
+fi
 
 # ─── 3. GET /users/{user_id} ──────────────────────────────────────
 section "3. GET /users/{user_id}"
@@ -153,7 +158,8 @@ check_status "GET /users unknown → 404" "404" \
 # ─── 4. DB: date_of_birth (Bug #1 regression) ─────────────────────
 section "4. DB — date_of_birth + profile fields saved (Bug #1 regression)"
 
-if [ "$HAS_PSQL" = "1" ]; then
+IS_LOCAL=$(printf '%s' "$BASE" | grep -c 'localhost')
+if [ "$HAS_PSQL" = "1" ] && [ "$IS_LOCAL" = "1" ]; then
     DB_ROW=$(psql vitacompanion -t -A -F'|' -c \
         "SELECT u.date_of_birth::text, hp.starting_weight_kg::text, hp.primary_goal::text
          FROM users u JOIN user_health_profiles hp ON hp.user_id = u.id
@@ -195,7 +201,11 @@ if [ "$HAS_PSQL" = "1" ]; then
         fail "sharon.magen@gmail.com" "no health_profile row in DB"
     fi
 else
-    printf "  ⚠ Skipping DB checks (psql not available)\n"
+    if [ "$IS_LOCAL" = "0" ]; then
+        printf "  ⚠ Skipping local DB checks (running against non-local BASE: $BASE)\n"
+    else
+        printf "  ⚠ Skipping DB checks (psql not available)\n"
+    fi
 fi
 
 # ─── 5. POST /logs/daily ──────────────────────────────────────────

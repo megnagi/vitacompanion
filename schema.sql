@@ -34,7 +34,7 @@ CREATE TYPE report_period   AS ENUM ('weekly', 'monthly', 'on_demand');
 
 CREATE TABLE users (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    phone_number        TEXT UNIQUE NOT NULL,           -- WhatsApp primary key
+    phone_number        TEXT UNIQUE,                    -- WhatsApp (nullable — SSO users may have none)
     full_name           TEXT NOT NULL,
     email               TEXT UNIQUE,
     date_of_birth       DATE NOT NULL,
@@ -45,7 +45,10 @@ CREATE TABLE users (
     onboarded_at        TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    is_active           BOOLEAN NOT NULL DEFAULT TRUE
+    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    sso_provider        VARCHAR(50),                   -- 'google', 'apple', etc.
+    sso_id              VARCHAR(255),                  -- provider-specific user ID
+    avatar_url          TEXT                           -- profile picture URL from SSO
 );
 
 -- ============================================================
@@ -355,7 +358,7 @@ CREATE TABLE messages (
 
 CREATE TABLE rag_documents (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id         UUID REFERENCES users(id) ON DELETE CASCADE,        -- NULL = global doc
     
     doc_type        TEXT NOT NULL,                     -- 'profile' | 'daily_log' | 'plan' | 'conversation' | 'coaching_insight'
     source_id       UUID,                              -- FK to the source row (daily_log, message, etc.)
