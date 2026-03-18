@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_NAME: str = "VitaCompanion"
 
+    # Frontend URL (for CORS in production)
+    FRONTEND_URL: str = ""
+
     # Twilio (optional — WhatsApp nudges)
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
