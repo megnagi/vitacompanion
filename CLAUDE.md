@@ -37,10 +37,14 @@ email: test2@test.com  lang: en
 - [x] Day 11: Multi-step onboarding flow at /onboarding (goal → vitals → medical → dietary → persona)
 - [x] Day 11: End-to-end test suite (tests/test_e2e.sh — 69 assertions, all pass)
 - [x] Day 11: Bug fixes — date_of_birth not saved for existing SSO users; chat 200→404 for missing profile; GET /users/{id} lazy-load 500; DOB in system prompt
-- [ ] Day 12: Deploy backend to Railway/Render, frontend to Vercel
-- [ ] Day 12: Set up real Twilio number (move off sandbox)
-- [ ] Day 12: Activate pg_cron on hosted PostgreSQL DB
-- [ ] Day 12: End-to-end smoke test on production
+- [x] Day 12: Deploy backend to Railway, frontend to Vercel
+- [x] Day 12: Fix schema mismatches (phone_number nullable, sso columns, rag_documents user_id nullable)
+- [x] Day 12: Fix ANTHROPIC_API_KEY trailing newline → httpx.LocalProtocolError on Railway
+- [x] Day 12: Production test suite — 54 pass after fixes (sections 2/4 skip non-local data checks)
+- [ ] Day 13: Sentry error monitoring (sentry-sdk, DSN env var, FastAPI integration)
+- [ ] Day 13: Custom domain (Railway custom domain + Vercel custom domain)
+- [ ] Day 13: Set up real Twilio number (move off sandbox)
+- [ ] Day 13: Activate pg_cron on Railway PostgreSQL
 
 ## Docs
 - `docs/schema.md` — column names, ENUMs, cast syntax, validation rules
