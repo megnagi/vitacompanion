@@ -311,21 +311,39 @@ check_status "GET /logs/daily nonexistent date → 404" "404" \
 # ─── 9. POST /chat — SSE streaming ───────────────────────────────
 section "9. POST /chat — SSE streaming"
 
-CHAT_OUT=$(curl -s -N --max-time 20 -X POST "$BASE/chat" \
-    -H "Content-Type: application/json" \
-    -d "{\"user_id\":\"$TEST_USER_ID\",\"message\":\"How many calories should I eat today?\"}" 2>&1)
+# Write headers + body to temp files to avoid shell variable capture issues
+# and allow a generous timeout for the full stream to complete on Railway.
+_CHAT_HDR=$(mktemp)
+_CHAT_BODY=$(mktemp)
 
-printf '%s' "$CHAT_OUT" | grep -q '"chunk"' \
+CHAT_HTTP=$(curl -s -N --max-time 45 --connect-timeout 10 \
+    -D "$_CHAT_HDR" -o "$_CHAT_BODY" -w "%{http_code}" \
+    -X POST "$BASE/chat" \
+    -H "Content-Type: application/json" \
+    -d "{\"user_id\":\"$TEST_USER_ID\",\"message\":\"How many calories should I eat today?\"}" 2>/dev/null)
+
+[ "$CHAT_HTTP" = "200" ] \
+    && pass "Chat SSE: HTTP 200" \
+    || fail "Chat SSE: HTTP 200" "got HTTP $CHAT_HTTP — $(head -c 200 "$_CHAT_BODY")"
+
+grep -qi "content-type: text/event-stream" "$_CHAT_HDR" \
+    && pass "Chat SSE: Content-Type text/event-stream" \
+    || fail "Chat SSE: Content-Type" "not text/event-stream"
+
+grep -q '"chunk"' "$_CHAT_BODY" \
     && pass "Chat SSE: text chunks received" \
     || fail "Chat SSE: text chunks received" "no chunk data in stream"
 
-printf '%s' "$CHAT_OUT" | grep -q '"done"' \
+grep -q '"done"' "$_CHAT_BODY" \
     && pass "Chat SSE: done event received" \
     || fail "Chat SSE: done event received" "no done event"
 
-printf '%s' "$CHAT_OUT" | grep -q '"conversation_id"' \
-    && pass "Chat SSE: conversation_id returned" \
+CHAT_CONV_ID=$(grep '"done"' "$_CHAT_BODY" | grep -o '"conversation_id":"[^"]*"' | cut -d'"' -f4)
+[ -n "$CHAT_CONV_ID" ] \
+    && pass "Chat SSE: conversation_id returned ($CHAT_CONV_ID)" \
     || fail "Chat SSE: conversation_id returned" "no conversation_id in done event"
+
+rm -f "$_CHAT_HDR" "$_CHAT_BODY"
 
 # ─── 10. POST /scheduler/checkin ─────────────────────────────────
 section "10. POST /scheduler/checkin"
