@@ -185,65 +185,74 @@ async def stream_chat(
         data: ChatRequest,
         db: AsyncSession,
 ) -> AsyncGenerator[str, None]:
-    user_id, conversation, system_prompt, claude_messages, persona, now = \
-        await _load_context(data, db)
-
-    client = AsyncAnthropic(api_key=(os.getenv("ANTHROPIC_API_KEY") or "").strip())
-    full_text = ""
-    input_tokens = 0
-    output_tokens = 0
-
+    import traceback
+    print(f"[chat] stream_chat called for user {data.user_id}")
     try:
-        async with client.messages.stream(
-            model="claude-sonnet-4-5",
-            max_tokens=200,
-            system=system_prompt,
-            messages=claude_messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                full_text += text
-                yield f"data: {json.dumps({'chunk': text})}\n\n"
+        user_id, conversation, system_prompt, claude_messages, persona, now = \
+            await _load_context(data, db)
 
-            final = await stream.get_final_message()
-            input_tokens = final.usage.input_tokens
-            output_tokens = final.usage.output_tokens
-    except Exception:
-        fallback = "I'm having trouble connecting right now. Please try again in a moment."
-        full_text = fallback
-        yield f"data: {json.dumps({'chunk': fallback})}\n\n"
+        client = AsyncAnthropic(api_key=(os.getenv("ANTHROPIC_API_KEY") or "").strip())
+        full_text = ""
+        input_tokens = 0
+        output_tokens = 0
 
-    # Save to DB after stream completes
-    user_msg = Message(
-        id=uuid.uuid4(),
-        conversation_id=conversation.id,
-        user_id=user_id,
-        role="user",
-        content=data.message,
-        safety_flag_raised=False,
-        created_at=now,
-    )
-    db.add(user_msg)
+        try:
+            async with client.messages.stream(
+                model="claude-sonnet-4-5",
+                max_tokens=200,
+                system=system_prompt,
+                messages=claude_messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    full_text += text
+                    yield f"data: {json.dumps({'chunk': text})}\n\n"
 
-    assistant_msg = Message(
-        id=uuid.uuid4(),
-        conversation_id=conversation.id,
-        user_id=user_id,
-        role="assistant",
-        content=full_text,
-        bot_source="orchestrator",
-        persona_applied=persona,
-        safety_flag_raised=False,
-        raw_bot_response={
-            "model": "claude-sonnet-4-5",
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-        },
-        token_count=input_tokens + output_tokens,
-        created_at=now,
-    )
-    db.add(assistant_msg)
+                final = await stream.get_final_message()
+                input_tokens = final.usage.input_tokens
+                output_tokens = final.usage.output_tokens
+        except Exception:
+            fallback = "I'm having trouble connecting right now. Please try again in a moment."
+            full_text = fallback
+            yield f"data: {json.dumps({'chunk': fallback})}\n\n"
 
-    conversation.last_message_at = now
-    await db.commit()
+        # Save to DB after stream completes
+        user_msg = Message(
+            id=uuid.uuid4(),
+            conversation_id=conversation.id,
+            user_id=user_id,
+            role="user",
+            content=data.message,
+            safety_flag_raised=False,
+            created_at=now,
+        )
+        db.add(user_msg)
 
-    yield f"data: {json.dumps({'done': True, 'conversation_id': str(conversation.id), 'message_id': str(assistant_msg.id)})}\n\n"
+        assistant_msg = Message(
+            id=uuid.uuid4(),
+            conversation_id=conversation.id,
+            user_id=user_id,
+            role="assistant",
+            content=full_text,
+            bot_source="orchestrator",
+            persona_applied=persona,
+            safety_flag_raised=False,
+            raw_bot_response={
+                "model": "claude-sonnet-4-5",
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+            },
+            token_count=input_tokens + output_tokens,
+            created_at=now,
+        )
+        db.add(assistant_msg)
+
+        conversation.last_message_at = now
+        await db.commit()
+
+        yield f"data: {json.dumps({'done': True, 'conversation_id': str(conversation.id), 'message_id': str(assistant_msg.id)})}\n\n"
+
+    except Exception as e:
+        error_msg = traceback.format_exc()
+        print(f"[chat] STREAM ERROR: {error_msg}")
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'conversation_id': None})}\n\n"
