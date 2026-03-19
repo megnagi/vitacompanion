@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # tests/test_e2e.sh — VitaCompanion end-to-end backend tests
-# Usage: ./tests/test_e2e.sh
-# Requires: curl, jq, psql
+#
+# Usage:
+#   ./tests/test_e2e.sh                            # local backend
+#   BASE=https://... bash tests/test_e2e.sh        # production (no DB checks)
+#   BASE=https://... DB_URL=postgresql://... bash tests/test_e2e.sh  # + schema/DB checks
+#
+# Requires: curl, jq
+# Optional: psql (enables section 4, 4.5, 9-DB, 17 checks)
 
 BASE="${BASE:-http://localhost:8000}"
+DB_URL="${DB_URL:-}"          # Production DATABASE_URL for schema/DB checks (optional)
 TODAY="2026-03-18"
 
 # Fixed test identifiers — deterministic across runs
@@ -58,6 +65,22 @@ check_truthy() {
     fi
 }
 
+# Run a psql query against the correct DB (local or remote via DB_URL).
+# Usage: dbpsql [psql-flags] -c "SQL"
+# Returns empty string if no DB is accessible.
+dbpsql() {
+    if [ "$IS_LOCAL" = "1" ]; then
+        psql vitacompanion "$@" 2>/dev/null
+    elif [ -n "$DB_URL" ]; then
+        psql "$DB_URL" "$@" 2>/dev/null
+    fi
+}
+
+# Whether a DB connection is available for this run
+db_available() {
+    [ "$HAS_PSQL" = "1" ] && { [ "$IS_LOCAL" = "1" ] || [ -n "$DB_URL" ]; }
+}
+
 # ─── Pre-flight ────────────────────────────────────────────────────
 section "Pre-flight"
 
@@ -73,6 +96,8 @@ else
     HAS_PSQL=1
     pass "psql available"
 fi
+
+IS_LOCAL=$(printf '%s' "$BASE" | grep -c 'localhost')
 
 HEALTH_RESP=$(vcurl "$BASE/docs" 2>/dev/null)
 HEALTH_STATUS=$(status_of "$HEALTH_RESP")
@@ -158,7 +183,6 @@ check_status "GET /users unknown → 404" "404" \
 # ─── 4. DB: date_of_birth (Bug #1 regression) ─────────────────────
 section "4. DB — date_of_birth + profile fields saved (Bug #1 regression)"
 
-IS_LOCAL=$(printf '%s' "$BASE" | grep -c 'localhost')
 if [ "$HAS_PSQL" = "1" ] && [ "$IS_LOCAL" = "1" ]; then
     DB_ROW=$(psql vitacompanion -t -A -F'|' -c \
         "SELECT u.date_of_birth::text, hp.starting_weight_kg::text, hp.primary_goal::text
@@ -205,6 +229,47 @@ else
         printf "  ⚠ Skipping local DB checks (running against non-local BASE: $BASE)\n"
     else
         printf "  ⚠ Skipping DB checks (psql not available)\n"
+    fi
+fi
+
+# ─── 4.5. Schema validation ───────────────────────────────────────
+section "4.5. Schema validation — required columns"
+
+if db_available; then
+    _schema_col() {
+        # Pass if column exists in table; fail otherwise.
+        local table="$1" col="$2"
+        local n; n=$(dbpsql -t -A -c \
+            "SELECT COUNT(*)::text FROM information_schema.columns
+             WHERE table_name='$table' AND column_name='$col'")
+        [ "$n" = "1" ] \
+            && pass "schema: $table.$col exists" \
+            || fail "schema: $table.$col missing" "column not found — run migration"
+    }
+
+    # conversations
+    _schema_col conversations bot_type
+    _schema_col conversations last_message_at
+    _schema_col conversations is_active
+
+    # users SSO columns
+    _schema_col users sso_provider
+    _schema_col users sso_id
+    _schema_col users avatar_url
+
+    # rag_documents.user_id must be nullable
+    _RAG_NULL=$(dbpsql -t -A -c \
+        "SELECT is_nullable FROM information_schema.columns
+         WHERE table_name='rag_documents' AND column_name='user_id'")
+    [ "$_RAG_NULL" = "YES" ] \
+        && pass "schema: rag_documents.user_id is nullable" \
+        || fail "schema: rag_documents.user_id not nullable" \
+                "run: ALTER TABLE rag_documents ALTER COLUMN user_id DROP NOT NULL"
+else
+    if [ "$HAS_PSQL" = "0" ]; then
+        printf "  ⚠ Skipping schema checks (psql not available)\n"
+    else
+        printf "  ⚠ Skipping schema checks (set DB_URL=<production-url> to enable)\n"
     fi
 fi
 
@@ -308,13 +373,14 @@ fi
 check_status "GET /logs/daily nonexistent date → 404" "404" \
     "$(vcurl "$BASE/logs/daily/$TEST_USER_ID/2020-01-01")"
 
-# ─── 9. POST /chat — SSE smoke test ──────────────────────────────
+# ─── 9. POST /chat — SSE smoke test + DB verification ────────────
 section "9. POST /chat — SSE smoke test"
 
-# curl cannot reliably parse streaming responses in bash;
-# verify the endpoint accepts the request and returns the correct headers.
+# Let the full stream complete (--max-time 45) but discard the body.
+# The server only writes to DB after the stream finishes, so we must
+# wait for it to end before running DB checks.
 _CHAT_HDR=$(mktemp)
-CHAT_HTTP=$(curl -s --max-time 5 --connect-timeout 10 \
+CHAT_HTTP=$(curl -s --max-time 45 --connect-timeout 10 \
     -D "$_CHAT_HDR" -o /dev/null -w "%{http_code}" \
     -X POST "$BASE/chat" \
     -H "Content-Type: application/json" \
@@ -331,6 +397,25 @@ grep -qi "content-type: text/event-stream" "$_CHAT_HDR" \
 pass "Chat SSE: stream body not verified (curl SSE parsing unreliable in bash)"
 
 rm -f "$_CHAT_HDR"
+
+# DB-side verification: confirm conversation + message were persisted
+if db_available; then
+    CHAT_CONV=$(dbpsql -t -A -c \
+        "SELECT id FROM conversations WHERE user_id = '$TEST_USER_ID' LIMIT 1")
+    [ -n "$CHAT_CONV" ] \
+        && pass "Chat DB: conversation row created ($CHAT_CONV)" \
+        || fail "Chat DB: conversation row created" "no row in conversations for $TEST_USER_ID"
+
+    if [ -n "$CHAT_CONV" ]; then
+        MSG_COUNT=$(dbpsql -t -A -c \
+            "SELECT COUNT(*)::text FROM messages WHERE conversation_id = '$CHAT_CONV'")
+        [ "${MSG_COUNT:-0}" -ge 2 ] \
+            && pass "Chat DB: messages persisted ($MSG_COUNT rows — user + assistant)" \
+            || fail "Chat DB: messages persisted" "expected ≥2 rows, got ${MSG_COUNT:-0}"
+    fi
+else
+    printf "  ⚠ Skipping chat DB checks (set DB_URL=<production-url> to enable)\n"
+fi
 
 # ─── 10. POST /scheduler/checkin ─────────────────────────────────
 section "10. POST /scheduler/checkin"
